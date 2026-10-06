@@ -72,8 +72,9 @@ async def ingest_all():
 
 def _joined(currency: str):
     orders, products, ships = store.load("orders"), store.load("products"), store.load("shipments")
-    if orders.empty:
-        raise HTTPException(409, "No data loaded. Call POST /ingest/all first.")
+    if orders.empty:  # cold serverless instance: seed from bundled samples
+        _seed_sync()
+        orders, products, ships = store.load("orders"), store.load("products"), store.load("shipments")
     try:
         rate, src = get_rate("USD", currency)
     except ValueError as e:

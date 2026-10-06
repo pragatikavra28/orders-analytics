@@ -6,7 +6,8 @@ from contextlib import contextmanager
 import pandas as pd
 import os
 
-DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "..", "data", "app.db"))
+_default = "/tmp/app.db" if os.environ.get("VERCEL") else os.path.join(os.path.dirname(__file__), "..", "data", "app.db")
+DB_PATH = os.environ.get("DB_PATH", _default)
 
 
 @contextmanager
