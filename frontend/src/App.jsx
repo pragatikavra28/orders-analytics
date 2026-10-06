@@ -1,27 +1,48 @@
+import { useEffect, useState } from "react";
 import { useStore } from "./store";
 import { seedData } from "./api";
 import KpiCard from "./components/KpiCard";
 import Filters from "./components/Filters";
 import OrdersTable from "./components/OrdersTable";
+import ProductsPage from "./components/ProductsPage";
+import ShipmentsPage from "./components/ShipmentsPage";
 import { RevenueTrend, CategoryRevenue, DeliveryPerformance } from "./components/Charts";
 
 const fmt = (n, cur) => new Intl.NumberFormat("en-US", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(n);
 
+const TABS = [
+  ["dashboard", "Dashboard", "Hi, welcome back"],
+  ["orders", "Orders", "Orders"],
+  ["products", "Products", "Products"],
+  ["shipments", "Shipments", "Shipments"],
+];
+
 export default function App() {
-  const { state, reload } = useStore();
+  const [tab, setTab] = useState("dashboard");
+  const { state, dispatch, reload } = useStore();
   const { summary, loading, error, filters } = state;
   const d = summary?.data;
+  const usesOrders = tab === "dashboard" || tab === "orders";
+  const title = TABS.find((t) => t[0] === tab)[2];
+
+  useEffect(() => { dispatch({ type: "pageSize", payload: tab === "orders" ? 10 : 5 }); }, [tab, dispatch]);
 
   return (
     <div className="layout">
       <aside className="sidebar">
         <div className="logo">◆ Orders</div>
-        <nav><a className="active">Dashboard</a><a>Orders</a><a>Products</a><a>Shipments</a></nav>
+        <nav>
+          {TABS.map(([id, label]) => (
+            <a key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</a>
+          ))}
+        </nav>
       </aside>
       <main>
-        <h1>Hi, welcome back</h1>
-        <Filters />
-        {error && (
+        <h1>{title}</h1>
+        {tab === "products" && <ProductsPage />}
+        {tab === "shipments" && <ShipmentsPage />}
+        {usesOrders && <Filters />}
+        {usesOrders && error && (
           <div className="banner err">
             {error}
             <span>
@@ -30,8 +51,9 @@ export default function App() {
             </span>
           </div>
         )}
-        {loading && <div className="loading">Loading…</div>}
-        {d && (
+        {usesOrders && loading && <div className="loading">Loading…</div>}
+        {usesOrders && tab === "orders" && d && <OrdersTable />}
+        {usesOrders && tab === "dashboard" && d && (
           <>
             <section className="kpis">
               <KpiCard tone="blue" label="Total Orders" value={d.kpis.total_orders} />
@@ -52,7 +74,7 @@ export default function App() {
             )}
           </>
         )}
-        {!loading && !error && d && d.kpis.total_orders === 0 && <div className="empty">No orders match these filters.</div>}
+        {usesOrders && !loading && !error && d && d.kpis.total_orders === 0 && <div className="empty">No orders match these filters.</div>}
       </main>
     </div>
   );

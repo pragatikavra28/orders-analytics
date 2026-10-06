@@ -11,6 +11,8 @@ async function get(path, params = {}) {
 }
 
 export const fetchSummary = (f) => get("/analytics/summary", f);
+export const fetchProducts = (currency) => get("/analytics/products", { currency });
+export const fetchShipments = () => get("/analytics/shipments");
 export const fetchOrders = (f, page, page_size = 5) =>
   get("/analytics/orders", { ...f, page, page_size });
 export const fetchOrder = (id, currency) => get(`/analytics/orders/${id}`, { currency });

@@ -44,3 +44,18 @@ def test_bad_upload_returns_422():
     with client:
         r = client.post("/ingest/xml", files={"file": ("x.xml", b"<a><b></a>")})
     assert r.status_code == 422
+
+
+def test_products_and_shipments_endpoints():
+    with client:
+        client.post("/ingest/all")
+        p = client.get("/analytics/products").json()
+        by_id = {r["product_id"]: r for r in p["data"]}
+        assert p["meta"]["total"] == 3
+        assert by_id["P101"]["units_sold"] == 2 and by_id["P101"]["revenue"] == 1000
+        assert by_id["P103"]["revenue"] == 600
+        inr = client.get("/analytics/products?currency=INR").json()["data"]
+        assert {r["product_id"]: r for r in inr}["P103"]["revenue"] == 600 * 83
+        s = client.get("/analytics/shipments").json()
+        assert s["meta"]["total"] == 2 and s["meta"]["delayed"] == 1
+        assert {r["shipment_id"]: r["delayed"] for r in s["data"]} == {"S001": False, "S002": True}

@@ -126,6 +126,41 @@ def order_detail(order_id: str, currency: str = "USD"):
               status=d.iloc[0]["status"], delivery_days=d.iloc[0]["delivery_days"])
 
 
+def _records(df: pd.DataFrame) -> list[dict]:
+    """DataFrame -> JSON-safe list of dicts (NaN -> None)."""
+    return df.astype(object).where(df.notna(), None).to_dict("records")
+
+
+@app.get("/analytics/products")
+def analytics_products(currency: str = "USD"):
+    """Product catalogue with units sold and revenue per product."""
+    df, _, _ = _joined(currency)  # also seeds a cold instance
+    products = store.load("products")
+    agg = (df.dropna(subset=["product_id"])
+             .groupby("product_id")
+             .agg(units_sold=("qty", "sum"), orders=("order_id", "nunique"),
+                  revenue=("line_total_converted", "sum"))
+             .reset_index())
+    out = products.merge(agg, on="product_id", how="left")
+    out["units_sold"] = out["units_sold"].fillna(0).astype(int)
+    out["orders"] = out["orders"].fillna(0).astype(int)
+    out["revenue"] = out["revenue"].fillna(0.0).round(2)
+    out = out.sort_values("revenue", ascending=False)
+    return ok(_records(out), currency=currency.upper(), total=len(out))
+
+
+@app.get("/analytics/shipments")
+def analytics_shipments():
+    """All shipments, with the delayed flag used by the dashboard."""
+    _joined("USD")  # seeds a cold instance
+    ships = store.load("shipments")
+    if not ships.empty:
+        ships["delayed"] = ships["delayed"].astype(bool)
+        ships = ships.sort_values("shipment_id")
+    return ok(_records(ships), total=len(ships),
+              delayed=int(ships["delayed"].sum()) if not ships.empty else 0)
+
+
 @app.get("/reference/countries")
 def countries():
     try:
