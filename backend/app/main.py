@@ -1,11 +1,13 @@
 import math
 import os
 from pathlib import Path
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import pandas as pd
 
 from . import analytics, parsers, store, transform
+from .errors import BadRequest
 from .currency import get_rate, country_currencies
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -29,11 +31,10 @@ async def _read(upload: UploadFile | None, default: str):
     return p.read_bytes()
 
 
-def _guard(fn, *a):
-    try:
-        return fn(*a)
-    except parsers.ParseError as e:
-        raise HTTPException(422, str(e))
+@app.exception_handler(BadRequest)
+async def bad_request_handler(_: Request, exc: BadRequest):
+    """Unusable input (bad file shape, bad date, ...) is always a clean 422."""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 @app.get("/health")
@@ -43,23 +44,24 @@ def health():
 
 @app.post("/ingest/json")
 async def ingest_json(file: UploadFile | None = File(None)):
-    df = transform.flatten_orders(_guard(parsers.parse_json, await _read(file, "Orders.json")))
+    df = transform.flatten_orders(parsers.parse_json(await _read(file, "Orders.json")))
     store.save("orders", df); _cache.clear()
-    return ok({"rows": len(df), "orders": int(df.order_id.nunique())})
+    return ok({"rows": len(df), "orders": int(df.order_id.nunique()),
+               "warnings": df.attrs.get("quality", {})})
 
 
 @app.post("/ingest/xml")
 async def ingest_xml(file: UploadFile | None = File(None)):
-    df = transform.clean_shipments(_guard(parsers.parse_xml, await _read(file, "Shipment.xml")))
+    df = transform.clean_shipments(parsers.parse_xml(await _read(file, "Shipment.xml")))
     store.save("shipments", df); _cache.clear()
-    return ok({"rows": len(df)})
+    return ok({"rows": len(df), "warnings": df.attrs.get("quality", {})})
 
 
 @app.post("/ingest/csv")
 async def ingest_csv(file: UploadFile | None = File(None)):
-    df = transform.clean_products(_guard(parsers.parse_csv, await _read(file, "Products.csv")))
+    df = transform.clean_products(parsers.parse_csv(await _read(file, "Products.csv")))
     store.save("products", df); _cache.clear()
-    return ok({"rows": len(df)})
+    return ok({"rows": len(df), "warnings": df.attrs.get("quality", {})})
 
 
 @app.post("/ingest/all")

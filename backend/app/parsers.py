@@ -10,8 +10,10 @@ import io
 import json
 import xml.etree.ElementTree as ET
 
+from .errors import BadRequest
 
-class ParseError(ValueError):
+
+class ParseError(BadRequest):
     pass
 
 

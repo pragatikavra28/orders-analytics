@@ -6,7 +6,12 @@ async function get(path, params = {}) {
   ).toString();
   const res = await fetch(`${BASE}${path}${qs ? "?" + qs : ""}`);
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+  if (!res.ok) {
+    // FastAPI sends a string for our errors but a list of {msg} for validation errors
+    const d = body.detail;
+    const msg = Array.isArray(d) ? d.map((e) => e.msg).join("; ") : d;
+    throw new Error(msg || `Request failed (${res.status})`);
+  }
   return body;
 }
 

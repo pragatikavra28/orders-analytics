@@ -92,6 +92,14 @@ curl "http://localhost:8000/analytics/summary?category=Electronics&currency=INR"
 - **SQLite + pandas:** data persists across restarts and needs no extra infrastructure; pandas keeps joins and aggregations concise.
 - **LEFT joins:** orders with no matching product or shipment are kept (shown as `Uncategorized` / `No Shipment`) rather than silently dropped.
 - **Delay flag:** an order is delayed if its shipment status is `Delayed` or delivery takes more than 5 days.
+- **Data-quality rules:** applied while ingesting, and every one is counted and returned in the ingest response under `warnings`:
+  - the same `order_id` more than once: the last record wins, the rest are dropped (no double counting)
+  - orders without an `order_id`, or entries that are not objects: skipped
+  - line items with a negative quantity or price: dropped (the order itself is kept)
+  - missing or non-numeric quantity/price: treated as 0
+  - dates that are not ISO `YYYY-MM-DD` (e.g. `01/04/2024`, which is ambiguous): not guessed. The order is kept, shown as `Unknown` in the revenue trend (so the trend always adds up to the KPIs), and excluded when a date filter is active
+- **Errors:** unusable input (wrong JSON shape, broken XML/CSV, an invalid `start`/`end` date) always returns a 422 with a `detail` message, never a 500.
+- **FX rates:** fetched from the exchange-rate API and cached for an hour (one response caches every currency). If the API fails, the last known rate is used, then a built-in fallback table, and the API is not retried for a minute.
 - **Currency:** live rates from open.er-api.com, cached, with an offline fallback; `meta.rate_source` reports which was used.
 - **State management:** Context + reducer is enough for this app's size; filters changes refetch automatically.
 
