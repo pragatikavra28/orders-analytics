@@ -2,6 +2,8 @@
 
 A full-stack analytics app that ingests orders (JSON), shipments (XML) and products (CSV), joins and cleans them, and serves aggregated metrics to a React dashboard.
 
+**Live demo:** https://orders-analytics-web.vercel.app
+
 **Stack:** FastAPI · pandas · PostgreSQL (SQLite for local dev) · React 18 · Vite · Recharts
 
 ## Features
