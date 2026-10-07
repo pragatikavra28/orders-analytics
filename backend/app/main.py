@@ -39,7 +39,7 @@ async def bad_request_handler(_: Request, exc: BadRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "storage": store.backend()}
 
 
 @app.post("/ingest/json")
@@ -74,8 +74,7 @@ async def ingest_all():
 
 def _joined(currency: str):
     orders, products, ships = store.load("orders"), store.load("products"), store.load("shipments")
-    if orders.empty:  # cold serverless instance: seed from bundled samples
-        _seed_sync()
+    if _seed_missing():  # first run: fill any table that was never loaded
         orders, products, ships = store.load("orders"), store.load("products"), store.load("shipments")
     try:
         rate, src = get_rate("USD", currency)
@@ -171,16 +170,27 @@ def countries():
         raise HTTPException(502, f"REST Countries API unavailable: {e}")
 
 
-def _seed_sync():
-    store.save("orders", transform.flatten_orders(parsers.parse_json((DATA_DIR / "Orders.json").read_bytes())))
-    store.save("shipments", transform.clean_shipments(parsers.parse_xml((DATA_DIR / "Shipment.xml").read_bytes())))
-    store.save("products", transform.clean_products(parsers.parse_csv((DATA_DIR / "Products.csv").read_bytes())))
+def _seed_missing() -> bool:
+    """Load the bundled sample file for every table that does not exist yet.
+
+    Keyed on table *existence*, not emptiness, so an upload is never replaced by
+    the samples. Returns True if anything was seeded."""
+    seeded = False
+    if not store.exists("orders"):
+        store.save("orders", transform.flatten_orders(parsers.parse_json((DATA_DIR / "Orders.json").read_bytes())))
+        seeded = True
+    if not store.exists("shipments"):
+        store.save("shipments", transform.clean_shipments(parsers.parse_xml((DATA_DIR / "Shipment.xml").read_bytes())))
+        seeded = True
+    if not store.exists("products"):
+        store.save("products", transform.clean_products(parsers.parse_csv((DATA_DIR / "Products.csv").read_bytes())))
+        seeded = True
+    return seeded
 
 
 @app.on_event("startup")
 def seed():
-    if store.load("orders").empty:
-        try:
-            _seed_sync()
-        except Exception as e:  # never block startup
-            print("seed failed:", e)
+    try:
+        _seed_missing()
+    except Exception as e:  # never block startup
+        print("seed failed:", e)

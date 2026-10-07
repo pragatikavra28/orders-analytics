@@ -2,7 +2,7 @@
 
 A full-stack analytics app that ingests orders (JSON), shipments (XML) and products (CSV), joins and cleans them, and serves aggregated metrics to a React dashboard.
 
-**Stack:** FastAPI · pandas · SQLite · React 18 · Vite · Recharts
+**Stack:** FastAPI · pandas · PostgreSQL (SQLite for local dev) · React 18 · Vite · Recharts
 
 ## Features
 
@@ -31,7 +31,7 @@ backend/
     transform.py   # flatten, clean, join (pure functions)
     analytics.py   # filters and aggregations
     currency.py    # FX rates (API + cache + fallback), REST Countries
-    store.py       # SQLite persistence
+    store.py       # persistence: PostgreSQL if DATABASE_URL is set, else SQLite
   data/            # sample Orders.json, Shipment.xml, Products.csv
   tests/
 frontend/
@@ -89,7 +89,12 @@ curl "http://localhost:8000/analytics/summary?category=Electronics&currency=INR"
 
 ## Design decisions
 
-- **SQLite + pandas:** data persists across restarts and needs no extra infrastructure; pandas keeps joins and aggregations concise.
+- **PostgreSQL in production, SQLite locally:** set `DATABASE_URL` (e.g. a Render/Neon connection string) and the app stores data in Postgres; leave it unset and it uses a local SQLite file, so there is nothing to install for development. Serverless hosts such as Vercel have per-instance throwaway disks, so uploads would be lost on restart and invisible to other instances with SQLite; a hosted database fixes both. Details:
+  - tables are replaced inside a single transaction, so concurrent requests never see a half-written table
+  - the bundled sample files are loaded only into tables that do not exist yet. Uploaded data (even an empty upload) is never overwritten by samples
+  - no idle connections are kept (`NullPool`), which suits short-lived serverless instances
+  - `GET /health` reports which backend is active (`"storage": "postgresql"` or `"sqlite"`)
+- **pandas:** keeps joins and aggregations concise.
 - **LEFT joins:** orders with no matching product or shipment are kept (shown as `Uncategorized` / `No Shipment`) rather than silently dropped.
 - **Delay flag:** an order is delayed if its shipment status is `Delayed` or delivery takes more than 5 days.
 - **Data-quality rules:** applied while ingesting, and every one is counted and returned in the ingest response under `warnings`:

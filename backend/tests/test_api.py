@@ -184,3 +184,84 @@ def test_fx_rate_is_cached_and_api_failures_back_off(monkeypatch):
     currency._api_down_until = 0.0
     assert currency.get_rate("USD", "INR") == (91.0, "cache")
     currency._cache.clear(); currency._api_down_until = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Storage: durability, sharing between instances, no overwrite by sample data
+# ---------------------------------------------------------------------------
+import threading
+
+import pandas as pd
+import pytest
+from sqlalchemy import create_engine
+
+from app import store
+from app.main import _seed_missing
+
+
+def test_health_reports_storage_backend():
+    assert client.get("/health").json() == {"status": "ok", "storage": store.backend()}
+
+
+def test_seeding_never_overwrites_uploaded_data():
+    """A cold instance re-runs the seeder; it must only fill tables that do not exist."""
+    with client:
+        _load({"orders": [_order("777", [{"product_id": "P101", "qty": 1, "price": 10}])]})
+        assert _seed_missing() is False  # nothing missing -> nothing touched
+        assert client.get("/analytics/summary").json()["data"]["kpis"]["total_orders"] == 1
+        # even an EMPTY upload is the user's data, not a reason to bring the samples back
+        _load({"orders": []})
+        assert _seed_missing() is False
+        assert client.get("/analytics/summary").json()["data"]["kpis"]["total_orders"] == 0
+        client.post("/ingest/all")  # restore samples for later tests
+
+
+def test_uploaded_data_is_visible_to_another_instance():
+    """A brand-new engine (= a different serverless instance) sees the upload."""
+    with client:
+        _load({"orders": [_order("888", [{"product_id": "P101", "qty": 2, "price": 50}])]})
+        other = create_engine(store.URL, **store._kwargs)  # fresh pool, same database
+        df = pd.read_sql_table("orders", other)
+        assert df["order_id"].tolist() == ["888"] and float(df["line_total"].iloc[0]) == 100
+        other.dispose()
+        client.post("/ingest/all")
+
+
+def test_partial_upload_seeds_only_missing_tables():
+    with client:
+        with store.engine.begin() as c:
+            for t in ("orders", "products", "shipments"):
+                c.exec_driver_sql(f"DROP TABLE IF EXISTS {t}")
+        client.post("/ingest/json", files={"file": ("o.json", json.dumps(
+            {"orders": [_order("1", [{"product_id": "P101", "qty": 1, "price": 5}])]}).encode())})
+        assert client.get("/analytics/summary").status_code == 200  # products/shipments auto-seeded
+        assert client.get("/analytics/summary").json()["data"]["kpis"]["total_orders"] == 1  # upload kept
+        client.post("/ingest/all")
+
+
+@pytest.mark.skipif(not store.IS_POSTGRES, reason="needs PostgreSQL (set DATABASE_URL)")
+def test_save_is_atomic_for_concurrent_readers():
+    """While one request replaces a table, others must never see it missing/half-written."""
+    df = pd.DataFrame({"product_id": ["a", "b", "c"], "product_name": ["x"] * 3, "category": ["y"] * 3})
+    store.save("race_test", df)
+    errors, stop = [], threading.Event()
+
+    def writer():
+        for _ in range(25):
+            store.save("race_test", df)
+        stop.set()
+
+    def reader():
+        while not stop.is_set():
+            try:
+                n = len(store.load("race_test"))
+                if n != 3:
+                    errors.append(f"saw {n} rows")
+            except Exception as e:  # noqa: BLE001
+                errors.append(repr(e)[:120])
+
+    ts = [threading.Thread(target=writer)] + [threading.Thread(target=reader) for _ in range(3)]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    with store.engine.begin() as c:
+        c.exec_driver_sql("DROP TABLE IF EXISTS race_test")
+    assert errors == []
